@@ -149,7 +149,6 @@ jobs:
                 - "5000:5000"
                 - "8765:8765"
               volumes:
-                - ./data:/app/database
                 - ./openalgo.env:/app/.env:ro
           EOF
 
