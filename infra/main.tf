@@ -39,16 +39,6 @@ variable "key_pair_name" {
   description = "Name of an existing EC2 SSH key pair"
 }
 
-variable "allowed_cidr" {
-  type        = string
-  description = "CIDR permitted to access SSH and OpenAlgo"
-
-  validation {
-    condition     = can(cidrhost(var.allowed_cidr, 0))
-    error_message = "Provide a valid CIDR, such as 203.0.113.10/32."
-  }
-}
-
 # ============================================================
 # AMAZON LINUX 2023 AMI
 # ============================================================
