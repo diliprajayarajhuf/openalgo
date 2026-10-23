@@ -122,6 +122,7 @@ jobs:
             "AWS_REGION='$AWS_REGION' IMAGE='$IMAGE' bash -s" <<'REMOTE'
           set -euo pipefail
 
+          mkdir -p /home/ec2-user/openalgo
           cd /home/ec2-user/openalgo
 
           aws s3 cp \
