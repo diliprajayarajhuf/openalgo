@@ -121,6 +121,8 @@ Resources:
               image: marketcalls/openalgo:latest
               container_name: openalgo-web
               restart: unless-stopped
+              env_file:
+                - /opt/openalgo/openalgo.env
               ports:
                 - "127.0.0.1:5000:5000"
                 - "127.0.0.1:8765:8765"
