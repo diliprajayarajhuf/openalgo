@@ -143,7 +143,7 @@ resource "aws_security_group" "openalgo" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = [var.allowed_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
@@ -151,7 +151,7 @@ resource "aws_security_group" "openalgo" {
     from_port   = 5000
     to_port     = 5000
     protocol    = "tcp"
-    cidr_blocks = [var.allowed_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
@@ -159,7 +159,7 @@ resource "aws_security_group" "openalgo" {
     from_port   = 8765
     to_port     = 8765
     protocol    = "tcp"
-    cidr_blocks = [var.allowed_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
