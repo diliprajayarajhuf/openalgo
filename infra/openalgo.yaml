@@ -98,7 +98,7 @@ Resources:
             VolumeSize: 30
             VolumeType: gp3
             Encrypted: true
-            DeleteOnTermination: false
+            DeleteOnTermination: true
       Tags:
         - Key: Name
           Value: openalgo-private
