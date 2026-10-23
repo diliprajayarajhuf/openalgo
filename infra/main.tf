@@ -1,4 +1,7 @@
+
 terraform {
+  required_version = ">= 1.5.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -14,10 +17,42 @@ terraform {
   }
 }
 
+# ============================================================
+# PROVIDER
+# ============================================================
+
 provider "aws" {
   region = var.aws_region
 }
-# Automatically find the latest Amazon Linux 2023 AMI
+
+# ============================================================
+# VARIABLES
+# ============================================================
+
+variable "aws_region" {
+  type    = string
+  default = "us-east-1"
+}
+
+variable "key_pair_name" {
+  type        = string
+  description = "Name of an existing EC2 SSH key pair"
+}
+
+variable "allowed_cidr" {
+  type        = string
+  description = "CIDR permitted to access SSH and OpenAlgo"
+
+  validation {
+    condition     = can(cidrhost(var.allowed_cidr, 0))
+    error_message = "Provide a valid CIDR, such as 203.0.113.10/32."
+  }
+}
+
+# ============================================================
+# AMAZON LINUX 2023 AMI
+# ============================================================
+
 data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]
@@ -28,27 +63,24 @@ data "aws_ami" "amazon_linux" {
   }
 
   filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+
+  filter {
     name   = "virtualization-type"
     values = ["hvm"]
   }
+
+  filter {
+    name   = "root-device-type"
+    values = ["ebs"]
+  }
 }
 
-# Generate an SSH key pair
-resource "tls_private_key" "openalgo" {
-  algorithm = "ED25519"
-}
-
-resource "aws_key_pair" "openalgo" {
-  key_name   = "openalgo-key"
-  public_key = tls_private_key.openalgo.public_key_openssh
-}
-
-# Find the public IP of the machine running Terraform
-data "http" "my_ip" {
-  url = "https://checkip.amazonaws.com/"
-}
-
-# ── VPC ─────────────────────────────────────────────
+# ============================================================
+# NETWORKING
+# ============================================================
 
 resource "aws_vpc" "openalgo" {
   cidr_block           = "10.87.0.0/16"
@@ -64,10 +96,10 @@ resource "aws_subnet" "openalgo" {
   vpc_id                  = aws_vpc.openalgo.id
   cidr_block              = "10.87.1.0/24"
   availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
 
   tags = {
-    Name = "openalgo-subnet"
+    Name = "openalgo-public-subnet"
   }
 }
 
@@ -88,7 +120,7 @@ resource "aws_route_table" "openalgo" {
   }
 
   tags = {
-    Name = "openalgo-rt"
+    Name = "openalgo-public-route-table"
   }
 }
 
@@ -97,7 +129,9 @@ resource "aws_route_table_association" "openalgo" {
   route_table_id = aws_route_table.openalgo.id
 }
 
-# ── Security Group ──────────────────────────────────
+# ============================================================
+# SECURITY GROUP
+# ============================================================
 
 resource "aws_security_group" "openalgo" {
   name        = "openalgo-sg"
@@ -129,6 +163,7 @@ resource "aws_security_group" "openalgo" {
   }
 
   egress {
+    description = "Allow outbound traffic"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -140,62 +175,9 @@ resource "aws_security_group" "openalgo" {
   }
 }
 
-# ── IAM Role ────────────────────────────────────────
-
-resource "aws_iam_role" "openalgo" {
-  name = "openalgo-ec2-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "openalgo" {
-  name = "openalgo-ec2-policy"
-  role = aws_iam_role.openalgo.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject"
-        ]
-        Resource = "arn:aws:s3:::us-east-1-openalgo/openalgo/openalgo.env"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:GetAuthorizationToken"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:BatchGetImage",
-          "ecr:GetDownloadUrlForLayer"
-        ]
-        Resource = aws_ecr_repository.openalgo.arn
-      }
-    ]
-  })
-}
-
-resource "aws_iam_instance_profile" "openalgo" {
-  name = "openalgo-ec2-profile"
-  role = aws_iam_role.openalgo.name
-}
-
-# ── ECR Repository ──────────────────────────────────
+# ============================================================
+# ECR
+# ============================================================
 
 resource "aws_ecr_repository" "openalgo" {
   name                 = "openalgo"
@@ -203,6 +185,10 @@ resource "aws_ecr_repository" "openalgo" {
 
   image_scanning_configuration {
     scan_on_push = true
+  }
+
+  tags = {
+    Name = "openalgo"
   }
 }
 
@@ -213,7 +199,7 @@ resource "aws_ecr_lifecycle_policy" "openalgo" {
     rules = [
       {
         rulePriority = 1
-        description  = "Keep last 3 images"
+        description  = "Keep the latest 3 images"
 
         selection = {
           tagStatus   = "any"
@@ -229,18 +215,95 @@ resource "aws_ecr_lifecycle_policy" "openalgo" {
   })
 }
 
-# ── EC2 ─────────────────────────────────────────────
+# ============================================================
+# EC2 IAM ROLE
+# ============================================================
+
+resource "aws_iam_role" "openalgo" {
+  name = "openalgo-ec2-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "openalgo" {
+  name = "openalgo-ec2-policy"
+  role = aws_iam_role.openalgo.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Action = [
+          "s3:GetObject"
+        ]
+
+        Resource = [
+          "arn:aws:s3:::us-east-1-openalgo/openalgo/openalgo.env"
+        ]
+      },
+      {
+        Effect = "Allow"
+
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ]
+
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+
+        Resource = aws_ecr_repository.openalgo.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "openalgo" {
+  name = "openalgo-ec2-profile"
+  role = aws_iam_role.openalgo.name
+}
+
+# ============================================================
+# EC2 INSTANCE
+# ============================================================
 
 resource "aws_instance" "openalgo" {
-  ami                    = var.ami_id
-  instance_type          = "t3.small"
-  key_name               = var.key_pair_name
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = "t3.small"
+
+  key_name = var.key_pair_name
+
   subnet_id              = aws_subnet.openalgo.id
   vpc_security_group_ids = [aws_security_group.openalgo.id]
-  iam_instance_profile   = aws_iam_instance_profile.openalgo.name
+
+  iam_instance_profile = aws_iam_instance_profile.openalgo.name
 
   metadata_options {
-    http_tokens = "required"
+    http_endpoint = "enabled"
+    http_tokens   = "required"
   }
 
   root_block_device {
@@ -253,7 +316,7 @@ resource "aws_instance" "openalgo" {
     #!/bin/bash
     set -euxo pipefail
 
-    dnf install -y docker curl
+    dnf install -y docker curl awscli-2
 
     mkdir -p /usr/local/lib/docker/cli-plugins
 
@@ -264,18 +327,26 @@ resource "aws_instance" "openalgo" {
     chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
     systemctl enable --now docker
+
     usermod -aG docker ec2-user
 
     mkdir -p /home/ec2-user/openalgo
-    chown ec2-user:ec2-user /home/ec2-user/openalgo
+
+    chown -R ec2-user:ec2-user /home/ec2-user/openalgo
   EOF
 
   tags = {
     Name = "openalgo"
   }
+
+  depends_on = [
+    aws_route_table_association.openalgo
+  ]
 }
 
-# ── Elastic IP ──────────────────────────────────────
+# ============================================================
+# ELASTIC IP
+# ============================================================
 
 resource "aws_eip" "openalgo" {
   domain   = "vpc"
@@ -284,18 +355,32 @@ resource "aws_eip" "openalgo" {
   tags = {
     Name = "openalgo-eip"
   }
+
+  depends_on = [
+    aws_internet_gateway.openalgo
+  ]
 }
 
-# ── Outputs ────────────────────────────────────────
-
-output "elastic_ip" {
-  value = aws_eip.openalgo.public_ip
-}
+# ============================================================
+# OUTPUTS
+# ============================================================
 
 output "instance_id" {
   value = aws_instance.openalgo.id
 }
 
+output "elastic_ip" {
+  value = aws_eip.openalgo.public_ip
+}
+
 output "ecr_repository_url" {
   value = aws_ecr_repository.openalgo.repository_url
+}
+
+output "ssh_command" {
+  value = "ssh -i YOUR_PRIVATE_KEY.pem ec2-user@${aws_eip.openalgo.public_ip}"
+}
+
+output "openalgo_url" {
+  value = "http://${aws_eip.openalgo.public_ip}:5000"
 }
