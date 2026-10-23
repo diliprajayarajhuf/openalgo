@@ -129,14 +129,6 @@ resource "aws_security_group" "openalgo" {
   vpc_id      = aws_vpc.openalgo.id
 
   ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
     description = "OpenAlgo Web"
     from_port   = 5000
     to_port     = 5000
