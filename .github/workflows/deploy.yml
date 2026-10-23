@@ -1,0 +1,171 @@
+
+name: Deploy OpenAlgo
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/deploy.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: openalgo-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: "590671674143"
+  ECR_REPOSITORY: openalgo
+  TF_VAR_key_pair_name: openalgo
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: infra
+        run: terraform init -input=false
+
+      - name: Terraform Apply
+        working-directory: infra
+        run: terraform apply -auto-approve -input=false
+
+      - name: Get EC2 IP
+        id: ec2
+        working-directory: infra
+        run: |
+          echo "ip=$(terraform output -raw elastic_ip)" >> "$GITHUB_OUTPUT"
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push OpenAlgo image to ECR
+        run: |
+          IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
+
+          docker pull marketcalls/openalgo:latest
+          docker tag marketcalls/openalgo:latest "$IMAGE"
+          docker push "$IMAGE"
+
+      - name: Prepare SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/openalgo.pem
+          chmod 600 ~/.ssh/openalgo.pem
+
+      - name: Allow temporary GitHub runner SSH access
+        id: ssh_access
+        env:
+          EC2_IP: ${{ steps.ec2.outputs.ip }}
+        run: |
+          SG_ID=$(aws ec2 describe-instances \
+            --filters "Name=ip-address,Values=${EC2_IP}" \
+            --query "Reservations[0].Instances[0].SecurityGroups[0].GroupId" \
+            --output text)
+
+          RUNNER_IP=$(curl -fsSL https://checkip.amazonaws.com/)
+
+          echo "sg_id=$SG_ID" >> "$GITHUB_OUTPUT"
+          echo "runner_cidr=$RUNNER_IP/32" >> "$GITHUB_OUTPUT"
+
+          aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --protocol tcp \
+            --port 22 \
+            --cidr "$RUNNER_IP/32"
+
+      - name: Deploy to EC2
+        env:
+          EC2_IP: ${{ steps.ec2.outputs.ip }}
+        run: |
+          IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
+
+          for i in $(seq 1 30); do
+            if ssh -i ~/.ssh/openalgo.pem \
+              -o StrictHostKeyChecking=accept-new \
+              -o ConnectTimeout=5 \
+              ec2-user@"$EC2_IP" "docker info >/dev/null 2>&1"; then
+              break
+            fi
+
+            if [ "$i" -eq 30 ]; then
+              echo "EC2 SSH or Docker is not ready"
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          ssh -i ~/.ssh/openalgo.pem \
+            -o StrictHostKeyChecking=accept-new \
+            ec2-user@"$EC2_IP" \
+            "AWS_REGION='$AWS_REGION' IMAGE='$IMAGE' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd /home/ec2-user/openalgo
+
+          aws s3 cp \
+            s3://us-east-1-openalgo/openalgo/openalgo.env \
+            .env
+
+          chmod 600 .env
+
+          aws ecr get-login-password --region "$AWS_REGION" |
+            docker login \
+              --username AWS \
+              --password-stdin \
+              "${IMAGE%%/*}"
+
+          cat > docker-compose.yml <<EOF
+          services:
+            openalgo:
+              image: $IMAGE
+              container_name: openalgo
+              restart: unless-stopped
+              env_file:
+                - .env
+              ports:
+                - "5000:5000"
+                - "8765:8765"
+              volumes:
+                - ./data:/app/database
+          EOF
+
+          mkdir -p data
+
+          docker compose pull
+          docker compose up -d --remove-orphans
+          docker compose ps
+          REMOTE
+
+      - name: Remove temporary SSH access
+        if: always() && steps.ssh_access.outputs.sg_id != ''
+        env:
+          SG_ID: ${{ steps.ssh_access.outputs.sg_id }}
+          RUNNER_CIDR: ${{ steps.ssh_access.outputs.runner_cidr }}
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$SG_ID" \
+            --protocol tcp \
+            --port 22 \
+            --cidr "$RUNNER_CIDR" || true
