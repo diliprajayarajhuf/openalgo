@@ -127,9 +127,9 @@ jobs:
 
           aws s3 cp \
             s3://us-east-1-openalgo/openalgo/openalgo.env \
-            .env
-
-          chmod 600 .env
+            openalgo.env
+          
+          chmod 600 openalgo.env
 
           aws ecr get-login-password --region "$AWS_REGION" |
             docker login \
