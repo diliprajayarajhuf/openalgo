@@ -17,6 +17,36 @@ terraform {
 provider "aws" {
   region = var.aws_region
 }
+# Automatically find the latest Amazon Linux 2023 AMI
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-2023.*-x86_64"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+# Generate an SSH key pair
+resource "tls_private_key" "openalgo" {
+  algorithm = "ED25519"
+}
+
+resource "aws_key_pair" "openalgo" {
+  key_name   = "openalgo-key"
+  public_key = tls_private_key.openalgo.public_key_openssh
+}
+
+# Find the public IP of the machine running Terraform
+data "http" "my_ip" {
+  url = "https://checkip.amazonaws.com/"
+}
 
 # ── VPC ─────────────────────────────────────────────
 
