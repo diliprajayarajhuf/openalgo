@@ -150,6 +150,7 @@ jobs:
                 - "8765:8765"
               volumes:
                 - ./data:/app/database
+                - ./openalgo.env:/app/.env:ro
           EOF
 
           mkdir -p data
