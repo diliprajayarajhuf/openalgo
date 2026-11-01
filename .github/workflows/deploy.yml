@@ -185,6 +185,12 @@ jobs:
               reverse_proxy openalgo:5000
             }
           }
+
+          # Old http://<ip>:5000 links land on the https address, where the
+          # secure login cookie works.
+          http://:5000 {
+            redir https://$DOMAIN{uri} permanent
+          }
           EOF
 
           cat > docker-compose.yml <<EOF
@@ -198,6 +204,7 @@ jobs:
               ports:
                 - "80:80"
                 - "443:443"
+                - "5000:5000"
               volumes:
                 - ./Caddyfile:/etc/caddy/Caddyfile:ro
                 - caddy_data:/data
@@ -212,9 +219,10 @@ jobs:
               image: $IMAGE
               container_name: openalgo
               restart: unless-stopped
-              # 5000 is public (plain http); 8765 stays on the instance.
+              # Only Caddy is public (80, 443, and 5000 which redirects to https).
+              # The app is reachable on the instance at 5001 for the health check.
               ports:
-                - "5000:5000"
+                - "127.0.0.1:5001:5000"
                 - "127.0.0.1:8765:8765"
               shm_size: 256m
               environment:
@@ -248,7 +256,7 @@ jobs:
 
           up=0
           for i in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:5000/auth/check-setup; then
+            if curl -fsS -o /dev/null http://127.0.0.1:5001/auth/check-setup; then
               up=1
               break
             fi
