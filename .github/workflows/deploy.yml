@@ -73,16 +73,8 @@ jobs:
       - name: Get EC2 IP
         id: ec2
         working-directory: infra
-        env:
-          OPENALGO_DOMAIN: ${{ vars.OPENALGO_DOMAIN }}
         run: |
-          IP=$(terraform output -raw elastic_ip)
-          echo "ip=$IP" >> "$GITHUB_OUTPUT"
-          # Brokers such as Upstox only accept an https redirect, which needs a
-          # hostname for the certificate. Without OPENALGO_DOMAIN set, sslip.io
-          # resolves <a-b-c-d>.sslip.io to the Elastic IP with no DNS setup.
-          DOMAIN="${OPENALGO_DOMAIN:-${IP//./-}.sslip.io}"
-          echo "domain=$DOMAIN" >> "$GITHUB_OUTPUT"
+          echo "ip=$(terraform output -raw elastic_ip)" >> "$GITHUB_OUTPUT"
 
       - name: Prepare SSH
         env:
@@ -116,7 +108,6 @@ jobs:
       - name: Deploy OpenAlgo to EC2
         env:
           EC2_IP: ${{ steps.ec2.outputs.ip }}
-          DOMAIN: ${{ steps.ec2.outputs.domain }}
         run: |
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           SSH="ssh -i $HOME/.ssh/openalgo.pem -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 ec2-user@$EC2_IP"
@@ -137,7 +128,7 @@ jobs:
 
           IMAGE="$REGISTRY/$ECR_REPOSITORY:sha-$GITHUB_SHA"
 
-          $SSH "AWS_REGION='$AWS_REGION' REGISTRY='$REGISTRY' IMAGE='$IMAGE' DOMAIN='$DOMAIN' bash -s" <<'REMOTE'
+          $SSH "AWS_REGION='$AWS_REGION' REGISTRY='$REGISTRY' IMAGE='$IMAGE' EC2_IP='$EC2_IP' bash -s" <<'REMOTE'
           set -euo pipefail
 
           mkdir -p /home/ec2-user/openalgo
@@ -148,9 +139,8 @@ jobs:
             openalgo.env
 
           # The stored file targets a local install. Inside Docker, Flask and
-          # the WebSocket proxy must listen on all interfaces, and every URL
-          # the browser or the broker callback uses must be the public https
-          # address that Caddy serves.
+          # the WebSocket proxy must listen on all interfaces, and the URLs
+          # the browser and the broker callback use must be the Elastic IP.
           set_env() {
             if grep -qE "^$1[[:space:]]*=" openalgo.env; then
               sed -i -E "s|^$1[[:space:]]*=.*|$1 = '$2'|" openalgo.env
@@ -160,11 +150,11 @@ jobs:
           }
           set_env FLASK_HOST_IP 0.0.0.0
           set_env WEBSOCKET_HOST 0.0.0.0
-          set_env HOST_SERVER "https://$DOMAIN"
-          set_env WEBSOCKET_URL "wss://$DOMAIN/ws"
-          set_env CORS_ALLOWED_ORIGINS "https://$DOMAIN"
+          set_env HOST_SERVER "http://$EC2_IP:5000"
+          set_env WEBSOCKET_URL "ws://$EC2_IP:8765"
+          set_env CORS_ALLOWED_ORIGINS "http://$EC2_IP:5000"
           set_env FLASK_ENV production
-          sed -i -E "s|^(REDIRECT_URL[[:space:]]*=[[:space:]]*')https?://[^/]+|\1https://$DOMAIN|" openalgo.env
+          sed -i -E "s|^(REDIRECT_URL[[:space:]]*=[[:space:]]*')https?://[^/]+|\1http://$EC2_IP:5000|" openalgo.env
 
           # The container runs as UID 1000 and may write FERNET_SALT back.
           chmod 600 openalgo.env
@@ -173,57 +163,15 @@ jobs:
           aws ecr get-login-password --region "$AWS_REGION" |
             docker login --username AWS --password-stdin "$REGISTRY"
 
-          # Caddy terminates TLS and renews the certificate on its own. The
-          # WebSocket proxy is reached at /ws, as in the nginx installs.
-          cat > Caddyfile <<EOF
-          $DOMAIN {
-            encode gzip
-            handle /ws* {
-              reverse_proxy openalgo:8765
-            }
-            handle {
-              reverse_proxy openalgo:5000
-            }
-          }
-
-          # Old http://<ip>:5000 links land on the https address, where the
-          # secure login cookie works.
-          http://:5000 {
-            redir https://$DOMAIN{uri} permanent
-          }
-          EOF
-
           cat > docker-compose.yml <<EOF
           services:
-            caddy:
-              image: caddy:2
-              container_name: caddy
-              restart: unless-stopped
-              depends_on:
-                - openalgo
-              ports:
-                - "80:80"
-                - "443:443"
-                - "5000:5000"
-              volumes:
-                - ./Caddyfile:/etc/caddy/Caddyfile:ro
-                - caddy_data:/data
-                - caddy_config:/config
-              logging:
-                driver: json-file
-                options:
-                  max-size: "10m"
-                  max-file: "3"
-
             openalgo:
               image: $IMAGE
               container_name: openalgo
               restart: unless-stopped
-              # Only Caddy is public (80, 443, and 5000 which redirects to https).
-              # The app is reachable on the instance at 5001 for the health check.
               ports:
-                - "127.0.0.1:5001:5000"
-                - "127.0.0.1:8765:8765"
+                - "5000:5000"
+                - "8765:8765"
               shm_size: 256m
               environment:
                 - STRATEGY_MEMORY_LIMIT_MB=256
@@ -246,51 +194,33 @@ jobs:
             openalgo_strategies:
             openalgo_keys:
             openalgo_tmp:
-            caddy_data:
-            caddy_config:
           EOF
 
           docker compose pull
           docker compose up -d --remove-orphans
           docker image prune -f
 
-          up=0
           for i in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:5001/auth/check-setup; then
-              up=1
-              break
-            fi
-            sleep 10
-          done
-          if [ "$up" -ne 1 ]; then
-            echo "OpenAlgo did not answer within 5 minutes. Last log lines:"
-            docker compose logs --tail 100 openalgo
-            exit 1
-          fi
-
-          # The first certificate takes a few seconds to issue.
-          for i in $(seq 1 18); do
-            if curl -fsS -o /dev/null "https://$DOMAIN/auth/check-setup"; then
-              echo "OpenAlgo is up at https://$DOMAIN"
+            if curl -fsS -o /dev/null http://127.0.0.1:5000/auth/check-setup; then
+              echo "OpenAlgo is up at http://$EC2_IP:5000"
               exit 0
             fi
             sleep 10
           done
 
-          echo "OpenAlgo runs, but https://$DOMAIN did not answer within 3 minutes. Caddy log:"
-          docker compose logs --tail 60 caddy
+          echo "OpenAlgo did not answer within 5 minutes. Last log lines:"
+          docker compose logs --tail 100 openalgo
           exit 1
           REMOTE
 
       - name: Run strategy once
         env:
           EC2_IP: ${{ steps.ec2.outputs.ip }}
-          DOMAIN: ${{ steps.ec2.outputs.domain }}
           OPENALGO_API_KEY: ${{ secrets.OPENALGO_API_KEY }}
           STRATEGY_HISTORY_SOURCE: ${{ vars.STRATEGY_HISTORY_SOURCE || 'api' }}
         run: |
           if [ -z "$OPENALGO_API_KEY" ]; then
-            echo "::notice::Strategy skipped: set the OPENALGO_API_KEY secret (generated at https://$DOMAIN/apikey) and re-run this workflow."
+            echo "::notice::Strategy skipped: set the OPENALGO_API_KEY secret (generated at http://$EC2_IP:5000/apikey) and re-run this workflow."
             exit 0
           fi
 

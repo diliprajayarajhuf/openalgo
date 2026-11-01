@@ -128,33 +128,21 @@ resource "aws_security_group" "openalgo" {
   description = "SSH and OpenAlgo access"
   vpc_id      = aws_vpc.openalgo.id
 
-  # Caddy serves OpenAlgo over https on 443. Port 80 answers the Let's
-  # Encrypt challenge and redirects browsers to https. 5000 also serves the
-  # app directly over plain http; 8765 is bound to the instance only.
   ingress {
-    description = "HTTP for certificate issuance and redirect"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "OpenAlgo over HTTPS"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "OpenAlgo over HTTP"
+    description = "OpenAlgo Web"
     from_port   = 5000
     to_port     = 5000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    description = "OpenAlgo WebSocket"
+    from_port   = 8765
+    to_port     = 8765
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
   ingress {
     description = "SSH access"
     from_port   = 22
@@ -413,5 +401,5 @@ output "ssh_command" {
 }
 
 output "openalgo_url" {
-  value = "https://${replace(aws_eip.openalgo.public_ip, ".", "-")}.sslip.io"
+  value = "http://${aws_eip.openalgo.public_ip}:5000"
 }
