@@ -7,11 +7,7 @@ from pprint import pformat
 
 BASE_URL = "https://nsearchives.nseindia.com/content/indices/"
 
-BASE_DIR = Path(
-    "/Users/keerthirajamani/Downloads/sourceCode/openalgo"
-)
-
-OUTPUT_FILE = BASE_DIR / "utils" / "index_constituent.py"
+OUTPUT_FILE = Path(__file__).resolve().parent / "index_constituent.py"
 
 INDEX_FILES = {
     "NIFTY_50": "ind_nifty50list.csv",

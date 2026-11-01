@@ -43,8 +43,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # One image, built from this repository, runs both OpenAlgo and the
-      # strategy. The GitHub Actions cache keeps rebuilds to a few minutes.
+      # The GitHub Actions cache keeps rebuilds to a few minutes.
       - name: Build and push OpenAlgo image
         uses: docker/build-push-action@v6
         with:
@@ -57,6 +56,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The custom/ folder only. Lambda rejects multi-platform manifests, so
+      # it is built for amd64 with no provenance attestation.
+      - name: Build and push custom Lambda image
+        uses: docker/build-push-action@v6
+        with:
+          context: custom
+          file: custom/lambda/Dockerfile
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:lambda-latest
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:lambda-sha-${{ github.sha }}
+          cache-from: type=gha,scope=lambda
+          cache-to: type=gha,mode=max,scope=lambda
+
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -68,6 +83,8 @@ jobs:
 
       - name: Terraform Apply
         working-directory: infra
+        env:
+          TF_VAR_lambda_image_tag: sha-${{ github.sha }}
         run: terraform apply -auto-approve -input=false
 
       - name: Get EC2 IP
@@ -273,34 +290,6 @@ jobs:
           docker compose logs --tail 60 caddy
           exit 1
           REMOTE
-
-      - name: Run strategy once
-        env:
-          EC2_IP: ${{ steps.ec2.outputs.ip }}
-          DOMAIN: ${{ steps.ec2.outputs.domain }}
-          OPENALGO_API_KEY: ${{ secrets.OPENALGO_API_KEY }}
-          STRATEGY_HISTORY_SOURCE: ${{ vars.STRATEGY_HISTORY_SOURCE || 'api' }}
-        run: |
-          if [ -z "$OPENALGO_API_KEY" ]; then
-            echo "::notice::Strategy skipped: set the OPENALGO_API_KEY secret (generated at https://$DOMAIN:5000/apikey) and re-run this workflow."
-            exit 0
-          fi
-
-          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          SSH="ssh -i $HOME/.ssh/openalgo.pem -o StrictHostKeyChecking=accept-new ec2-user@$EC2_IP"
-
-          # The key goes over stdin into a 600 file, never on a command line.
-          printf 'OPENALGO_API_KEY=%s\nSTRATEGY_HISTORY_SOURCE=%s\nHOST_SERVER=http://openalgo:5000\n' \
-            "$OPENALGO_API_KEY" "$STRATEGY_HISTORY_SOURCE" |
-            $SSH "umask 077; cat > /home/ec2-user/openalgo/strategy.env"
-
-          # Same image as OpenAlgo, started with the strategy as its command.
-          # No volumes, so it always runs the code from this commit.
-          $SSH "docker run --rm --name strategy \
-            --network openalgo_default \
-            --env-file /home/ec2-user/openalgo/strategy.env \
-            $REGISTRY/$ECR_REPOSITORY:sha-$GITHUB_SHA \
-            python -m utils.sampleStrategy_31302026"
 
       - name: Remove temporary SSH access
         if: always() && steps.ssh_access.outputs.sg_id != ''

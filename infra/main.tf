@@ -207,6 +207,21 @@ resource "aws_ecr_lifecycle_policy" "openalgo" {
         }
       },
       {
+        rulePriority = 3
+        description  = "Keep the last 5 custom Lambda builds"
+
+        selection = {
+          tagStatus     = "tagged"
+          tagPrefixList = ["lambda-sha-"]
+          countType     = "imageCountMoreThan"
+          countNumber   = 5
+        }
+
+        action = {
+          type = "expire"
+        }
+      },
+      {
         rulePriority = 1
         description  = "Expire untagged images after 1 day"
 

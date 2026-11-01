@@ -15,8 +15,8 @@ from pathlib import Path
 #     0,
 #     str(Path(__file__).resolve().parent.parent / "indicators")
 # )
-from utils.index_constituent import NIFTY_50
-from strategies.indicators.indicators import dema, tema, two_ut_bot, supertrend, three_horse_crow, INDICATOR_REGISTRY
+from index_constituent import NIFTY_50
+from indicators import dema, tema, two_ut_bot, supertrend, three_horse_crow, INDICATOR_REGISTRY
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -415,6 +415,28 @@ def ema_strategy(symbol):
 
 
 if __name__ == "__main__":
+    from datetime import date
+    import pandas_market_calendars as mcal
+
+    def is_market_open_today(calendar_name: str = "XNSE") -> bool:
+        """True if the market has a scheduled trading session today."""
+        today = date.today()
+        cal = mcal.get_calendar(calendar_name)
+
+        valid_days = cal.valid_days(
+            start_date=today,
+            end_date=today
+        )
+
+        return not valid_days.empty
+
+
+    # NSE
+    print("NSE open today:", is_market_open_today("XNSE"))
+
+    # BSE
+    print("BSE open today:", is_market_open_today("XBOM"))
+    sys.exit("lkncls")
     # while True:
     now = datetime.now(IST)
     print(f"{strategy} running at {now}")
