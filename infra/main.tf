@@ -128,18 +128,21 @@ resource "aws_security_group" "openalgo" {
   description = "SSH and OpenAlgo access"
   vpc_id      = aws_vpc.openalgo.id
 
+  # Port 80 answers the Let's
+  # Encrypt challenge. Caddy serves OpenAlgo over https on 5000; the app
+  # and its WebSocket (8765) are bound to the instance only.
   ingress {
-    description = "OpenAlgo Web"
-    from_port   = 5000
-    to_port     = 5000
+    description = "HTTP for certificate issuance and redirect"
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    description = "OpenAlgo WebSocket"
-    from_port   = 8765
-    to_port     = 8765
+    description = "OpenAlgo over HTTPS on 5000"
+    from_port   = 5000
+    to_port     = 5000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -401,5 +404,5 @@ output "ssh_command" {
 }
 
 output "openalgo_url" {
-  value = "http://${aws_eip.openalgo.public_ip}:5000"
+  value = "https://${replace(aws_eip.openalgo.public_ip, ".", "-")}.sslip.io:5000"
 }
