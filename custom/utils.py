@@ -1,73 +1,45 @@
-#!/usr/bin/env python
-"""
-Simple EMA Crossover Strategy Example
-This strategy demonstrates how to integrate with OpenAlgo API
-"""
-from openalgo import api
 import pandas as pd
-import numpy as np
-import time
-import threading
+import boto3
+import os, sys, time, math, json
+from .indicators import INDICATOR_REGISTRY
 from datetime import datetime, timedelta
-import os, sys
-from pathlib import Path
-# sys.path.insert(
-#     0,
-#     str(Path(__file__).resolve().parent.parent / "indicators")
-# )
-from index_constituent import NIFTY_50
-from indicators import dema, tema, two_ut_bot, supertrend, three_horse_crow, INDICATOR_REGISTRY
-from datetime import datetime
 from zoneinfo import ZoneInfo
-
-# Read API credentials and endpoints from environment.
-# When this strategy is launched via OpenAlgo's /python runner,
-# OPENALGO_API_KEY is injected by the platform and HOST_SERVER /
-# WEBSOCKET_URL are inherited from OpenAlgo's .env file.
-api_key = os.getenv('OPENALGO_API_KEY')
-host    = os.getenv('HOST_SERVER', 'http://127.0.0.1:5000')
-ws_url  = os.getenv('WEBSOCKET_URL', 'ws://127.0.0.1:8765')
-# 'db' reads candles stored by OpenAlgo's Historify; 'api' asks the broker.
-history_source = os.getenv('STRATEGY_HISTORY_SOURCE', 'db')
 IST = ZoneInfo("Asia/Kolkata")
 
-stock_cfg = {
-    "indicators": [
-        {"name": "2ut", "signals": ["buy", "sell"]},
-        {"name": "3hc", "signals": ["buy", "sell"]},
-        {"name": "supertrend", "signals": ["buy", "sell"]}
-    ],
-    "entry_conditions": {
-        "operator": "OR",
-        "groups": [
-            {
-                "operator": "AND",
-                "indicators": ["2ut", "supertrend"]
-            },
-            {
-                "operator": "AND",
-                "indicators": ["3hc", "supertrend"]
-            }
-        ]
-    }
+ALLOWED_INTERVALS = {
+    "api": ["D", "W", "M"],
+    "db":  ["D", "W", "M", "Q", "Y"],
 }
 
-if not api_key:
-    print("Error: OPENALGO_API_KEY environment variable not set")
-    exit(1)
+STRATEGY_CONFIG = {
+    "execution_time": "15:22",
+    "daily_intervals": ("D", "W", "M", "Q"),
+}
 
+def get_date_range(interval: str, source: str | None = "api"):
+    """Validate interval/source and return (start_date, end_date, source)."""
+    source = source or "api"
 
-# Set the strategy details and trading parameters
-strategy = "EMA Crossover Python"
-# nifty50_stocks = ["ADANIENT","ADANIPORTS","APOLLOHOSP","ASIANPAINT","AXISBANK","BAJAJ-AUTO","BAJFINANCE","BAJAJFINSV","BEL","BHARTIARTL","BSE","CIPLA","COALINDIA","DRREDDY","EICHERMOT","ETERNAL","GRASIM","HCLTECH","HDFCBANK","HDFCLIFE","HINDALCO","HINDUNILVR","ICICIBANK","INDIGO","INFY","ITC","JIOFIN","JSWSTEEL","KOTAKBANK","LT","M&M","MARUTI","MAXHEALTH","NESTLEIND","NTPC","ONGC","POWERGRID","RELIANCE","SBILIFE","SHRIRAMFIN","SBIN","SUNPHARMA","TCS","TATACONSUM","TMPV","TATASTEEL","TECHM","TITAN","TRENT","ULTRACEMCO"]
-exchange = "NSE"
-product = "CNC"
-quantity = 10
+    if source not in ALLOWED_INTERVALS:
+        raise ValueError(f"Invalid source '{source}'. Use 'api' or 'db'.")
 
+    if interval not in ALLOWED_INTERVALS[source]:
+        raise ValueError(
+            f"Interval '{interval}' is not allowed with source='{source}'. "
+            f"Allowed: {', '.join(ALLOWED_INTERVALS[source])}"
+        )
 
-# Set the API Key
-client = api(api_key=api_key, host=host, ws_url=ws_url)
+    now = datetime.now(IST)
+    if interval == "D":
+        start = now - timedelta(days=365)
+    elif interval == "W":
+        start = now - timedelta(days=365 * 3)
+    elif interval == "M":
+        start = now - timedelta(days=365 * 5)
+    else:  # Q, Y
+        start = datetime(2015, 1, 1, tzinfo=IST)
 
+    return start.strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d"), source
 
 def _crossover_direction(last, prev, crossover: dict) -> str | None:
     left, right = crossover.get("left"), crossover.get("right")
@@ -111,7 +83,6 @@ def _eval_group(group: dict, ind_direction: dict, last, prev) -> str | None:
     unique = set(non_none)
     return unique.pop() if len(unique) == 1 else None
 
-
 def build_signals(df: pd.DataFrame, stock_cfg: dict) -> dict | None:
     """
     Evaluate all indicators, apply entry conditions, and return exactly ONE
@@ -150,8 +121,8 @@ def build_signals(df: pd.DataFrame, stock_cfg: dict) -> dict | None:
     else:
         working.index = pd.to_datetime(working.index)
 
-    last = working.iloc[-2]
-    prev = working.iloc[-3] if len(working) >= 4 else None
+    last = working.iloc[-1]
+    prev = working.iloc[-2] if len(working) >= 4 else None
 
     ind_direction: dict[str, str | None] = {}
     ind_trend: dict[str, str | None] = {}
@@ -288,165 +259,26 @@ def build_signals(df: pd.DataFrame, stock_cfg: dict) -> dict | None:
         "indicators":  fired_indicators,
     }
 
-def ema_strategy(symbol):
-    """
-    The EMA crossover trading strategy.
-    """
-    position = 0
-    last_run_date = None
+def write_to_s3(bucket: str, key: str, body: bytes, content_type: str) -> None:
+    print('write to s3 started')
+    boto3.client("s3").put_object(Bucket=bucket, Key=key, Body=body, ContentType=content_type)
+    print('write to s3 completed')
 
+def read_s3_object(bucket: str, key: str) -> set[str]:
     try:
-        # Dynamic date range: 7 days back to today
-        end_date = datetime.now(IST).strftime("%Y-%m-%d")
-        start_date = (datetime.now(IST) - timedelta(days=52)).strftime("%Y-%m-%d")
+        s3 = boto3.client("s3")
+        resp = s3.get_object(Bucket=bucket, Key=key)
+        return list(json.loads(resp["Body"].read().decode("utf-8")))
+    except Exception:
+        return list()
+    
+def strategy_exit():
+        print("Markets are closed. Stopping all Strategies.")
+        sys.exit(0)
 
-        # Fetch 1-minute historical data using OpenAlgo
-        df = client.history(
-            symbol=symbol,
-            exchange=exchange,
-            interval="D",
-            start_date=start_date,
-            end_date=end_date,
-            source=history_source
-        )
-        if not isinstance(df, pd.DataFrame):
-            print(f"History request failed for {symbol}: {df}")
-            return
-        df['symbol']= symbol
-        print(df.tail(20))
-
-        # Check for valid data
-        if df.empty:
-            print("DataFrame is empty. Retrying...")
-            time.sleep(15)
-            return
-
-        # Verify required columns
-        if 'close' not in df.columns:
-            raise KeyError("Missing 'close' column in DataFrame")
-
-        # Round the close column
-        df['close'] = df['close'].round(2)
-
-        # Calculate EMAs and signals
-        # signals = calculate_ema_signals(df)
-        df = dema(df)
-        df = tema(df)
-        df = two_ut_bot(df)
-        df = three_horse_crow(df)
-        df = supertrend(df)
-        print(df.tail(10))
-        df1 = build_signals(df, stock_cfg)
-        print('dada',df1)
-        # sys.exit("Planned Exit")
-        # import logging
-        # logging.basicConfig(
-        #     level=logging.INFO,
-        #     format="%(asctime)s - %(levelname)s - %(message)s"
-        # )
-
-        # logger = logging.getLogger(__name__)
-
-        # Use the last two completed candles
-        # previous = df.iloc[-3]
-        # current = df.iloc[-2]
-        # buy = (
-        #     previous["dema"] <= previous["tema"]
-        #     and current["dema"] > current["tema"]
-        # )
-
-        # # Sell when 5 DEMA crosses below 20 TEMA
-        # sell = (
-        #     previous["dema"] >= previous["tema"]
-        #     and current["dema"] < current["tema"]
-        # )
-
-
-        # Execute Buy Order
-        # if buy and position <= 0:
-        #     position = quantity
-        #     status = client.analyzerstatus()
-
-        #     if (
-        #         status.get("status") != "success"
-        #         or status.get("data", {}).get("analyze_mode") is not True
-        #     ):
-        #         print("Analyzer Mode is OFF. Order blocked.")
-        #         return
-        #     print(f"Analyzer Mode is {status}. Order blocked.")
-        #     response = client.placesmartorder(
-        #         strategy=strategy,
-        #         symbol=symbol,
-        #         action="BUY",
-        #         exchange=exchange,
-        #         price_type="MARKET",
-        #         product=product,
-        #         quantity=quantity,
-        #         position_size=position
-        #     )
-        #     print("Buy Order Response:", response)
-
-        # Execute Sell Order
-        # elif sell and position >= 0:
-        #     position = quantity * -1
-        #     response = client.placesmartorder(
-        #         strategy=strategy,
-        #         symbol=symbol,
-        #         action="SELL",
-        #         exchange=exchange,
-        #         price_type="MARKET",
-        #         product=product,
-        #         quantity=quantity,
-        #         position_size=position
-        #     )
-        #     print("Sell Order Response:", response)
-
-        # Log strategy information
-        print("\nStrategy Status:")
-        print("-" * 50)
-        print(f"Position: {position}")
-        print(f"LTP: {df['close'].iloc[-1]}")
-        print("-" * 50)
-
-    except Exception as e:
-        print(f"Error in strategy: {str(e)}")
-        time.sleep(15)
-        return
-
-
-if __name__ == "__main__":
-    from datetime import date
-    import pandas_market_calendars as mcal
-
-    def is_market_open_today(calendar_name: str = "XNSE") -> bool:
-        """True if the market has a scheduled trading session today."""
-        today = date.today()
-        cal = mcal.get_calendar(calendar_name)
-
-        valid_days = cal.valid_days(
-            start_date=today,
-            end_date=today
-        )
-
-        return not valid_days.empty
-
-
-    # NSE
-    print("NSE open today:", is_market_open_today("XNSE"))
-
-    # BSE
-    print("BSE open today:", is_market_open_today("XBOM"))
-    sys.exit("lkncls")
-    # while True:
-    now = datetime.now(IST)
-    print(f"{strategy} running at {now}")
-    # Run only once at 3:22 PM IST
-    # if now.hour != 15 or now.minute != 22:
-    #     print(f"skipping {strategy} at {now}")
-    #     time.sleep(1)
-    #     continue
-    for stock in NIFTY_50:
-        # print(f"Starting {stock} {fast_period}/{slow_period} EMA Crossover Strategy...")
-        ema_strategy(stock)
-        # print(f"Completed {stock} {fast_period}/{slow_period} EMA Crossover Strategy...")
-
+def calculate_position_size(close: float, max_capital) -> int:
+    """
+    Allocate max_capital per trade.
+    Returns 0 if price exceeds the allocation cap.
+    """
+    return math.floor(max_capital / close)
