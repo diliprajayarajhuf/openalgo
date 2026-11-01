@@ -184,16 +184,34 @@ resource "aws_ecr_repository" "openalgo" {
 resource "aws_ecr_lifecycle_policy" "openalgo" {
   repository = aws_ecr_repository.openalgo.name
 
+  # Every deploy pushes sha-<commit> and moves latest onto it. Keep the last
+  # five builds for rollback and drop anything left untagged.
   policy = jsonencode({
     rules = [
       {
-        rulePriority = 1
-        description  = "Keep the latest 3 images"
+        rulePriority = 2
+        description  = "Keep the last 5 commit builds"
 
         selection = {
-          tagStatus   = "any"
-          countType   = "imageCountMoreThan"
-          countNumber = 3
+          tagStatus     = "tagged"
+          tagPrefixList = ["sha-"]
+          countType     = "imageCountMoreThan"
+          countNumber   = 5
+        }
+
+        action = {
+          type = "expire"
+        }
+      },
+      {
+        rulePriority = 1
+        description  = "Expire untagged images after 1 day"
+
+        selection = {
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = 1
         }
 
         action = {
@@ -305,7 +323,19 @@ resource "aws_instance" "openalgo" {
     #!/bin/bash
     set -euxo pipefail
 
-    dnf install -y docker curl awscli-2
+    # curl-minimal and awscli-2 ship with AL2023; installing full curl
+    # conflicts with curl-minimal and would abort this script under set -e.
+    dnf install -y docker
+
+    # t3.small has 2 GB RAM; swap keeps an image pull or a strategy run
+    # from getting the OpenAlgo container OOM-killed.
+    if [ ! -f /swapfile ]; then
+      dd if=/dev/zero of=/swapfile bs=1M count=2048
+      chmod 600 /swapfile
+      mkswap /swapfile
+      swapon /swapfile
+      echo "/swapfile swap swap defaults 0 0" >> /etc/fstab
+    fi
 
     mkdir -p /usr/local/lib/docker/cli-plugins
 
