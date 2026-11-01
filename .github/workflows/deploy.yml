@@ -212,9 +212,9 @@ jobs:
               image: $IMAGE
               container_name: openalgo
               restart: unless-stopped
-              # Only Caddy is public; these stay on the instance for checks.
+              # 5000 is public (plain http); 8765 stays on the instance.
               ports:
-                - "127.0.0.1:5000:5000"
+                - "5000:5000"
                 - "127.0.0.1:8765:8765"
               shm_size: 256m
               environment:
