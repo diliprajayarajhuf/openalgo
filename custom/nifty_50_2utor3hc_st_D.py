@@ -156,10 +156,11 @@ if __name__ == "__main__":
         already_executed_orders = read_s3_object(BUCKET,s3_order_key)
         signals = [signal for signal in signals if signal["symbol"] not in already_executed_orders]
         print(f"signals is {signals}")
-        sys.exit()
         placed_order = place_order(client, strategy, EXCHANGE, PRODUCT, MAX_CAPITAL_TRADE, signals)
+        print(f"placed_order {placed_order}")
         if place_order:
-            write_to_s3(BUCKET, s3_order_key, json.dumps(placed_order, indent=2).encode("utf-8"), "application/json")
+            already_executed_orders.update(placed_order)
+            write_to_s3(BUCKET, s3_order_key, json.dumps(already_executed_orders, indent=2).encode("utf-8"), "application/json")
         s3_strategy_key = f"{STRATEGY_FOLDER}/{strategy}/{date_str}/executed_{ts_str}.json"
         write_to_s3(BUCKET, s3_strategy_key, json.dumps(signals, indent=2).encode("utf-8"), "application/json")
     

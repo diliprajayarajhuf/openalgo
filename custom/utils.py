@@ -121,8 +121,8 @@ def build_signals(df: pd.DataFrame, stock_cfg: dict) -> dict | None:
     else:
         working.index = pd.to_datetime(working.index)
 
-    last = working.iloc[-1]
-    prev = working.iloc[-2] if len(working) >= 4 else None
+    last = working.iloc[-2]
+    prev = working.iloc[-3] if len(working) >= 4 else None
 
     ind_direction: dict[str, str | None] = {}
     ind_trend: dict[str, str | None] = {}
@@ -260,9 +260,7 @@ def build_signals(df: pd.DataFrame, stock_cfg: dict) -> dict | None:
     }
 
 def write_to_s3(bucket: str, key: str, body: bytes, content_type: str) -> None:
-    print('write to s3 started')
     boto3.client("s3").put_object(Bucket=bucket, Key=key, Body=body, ContentType=content_type)
-    print('write to s3 completed')
 
 def read_s3_object(bucket: str, key: str) -> set[str]:
     try:
