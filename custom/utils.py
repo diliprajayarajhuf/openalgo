@@ -121,8 +121,8 @@ def build_signals(df: pd.DataFrame, stock_cfg: dict) -> dict | None:
     else:
         working.index = pd.to_datetime(working.index)
 
-    last = working.iloc[-2]
-    prev = working.iloc[-3] if len(working) >= 4 else None
+    last = working.iloc[-1]
+    prev = working.iloc[-2] if len(working) >= 4 else None
 
     ind_direction: dict[str, str | None] = {}
     ind_trend: dict[str, str | None] = {}

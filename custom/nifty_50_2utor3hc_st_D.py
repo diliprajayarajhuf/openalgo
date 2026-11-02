@@ -9,11 +9,32 @@ import numpy as np
 import time, json
 from pathlib import Path
 import os, sys
-from .index_constituent import NIFTY_50
-from .indicators import dema, tema, two_ut_bot, supertrend, three_horse_crow
-from .utils import build_signals, get_date_range, write_to_s3, read_s3_object, strategy_exit, STRATEGY_CONFIG
-from .nse_utils import is_last_trading_day_of_week, is_last_trading_day_of_month
-from .orders import place_order
+BASE_DIR = Path(__file__).resolve().parents[2]
+# Add project root (/app), not /app/custom
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+# Imports
+from custom.index_constituent import NIFTY_50
+from custom.indicators import (
+    dema,
+    tema,
+    two_ut_bot,
+    supertrend,
+    three_horse_crow,
+)
+from custom.utils import (
+    build_signals,
+    get_date_range,
+    write_to_s3,
+    read_s3_object,
+    strategy_exit,
+    STRATEGY_CONFIG,
+)
+from custom.nse_utils import (
+    is_last_trading_day_of_week,
+    is_last_trading_day_of_month,
+)
+from custom.orders import place_order
 from datetime import datetime, time as dt_time, timedelta, date
 from zoneinfo import ZoneInfo
 IST = ZoneInfo("Asia/Kolkata")
@@ -129,17 +150,17 @@ if __name__ == "__main__":
     now = datetime.now(IST)
     # now = datetime.fromisoformat("2026-11-01 15:15:00.880580+05:30")
     print(f"{strategy} running at {now}")
-    if (INTERVAL.upper().endswith(STRATEGY_CONFIG["daily_intervals"])and now.strftime("%H:%M") != STRATEGY_CONFIG["execution_time"]):
-        execution_time = datetime.combine(now.date(),datetime.strptime(STRATEGY_CONFIG["execution_time"], "%H:%M").time(),tzinfo=IST)
-        print("execution_time",execution_time)
-        if now < execution_time:
-            wait_seconds = max(0, (execution_time - now).total_seconds() - 5)
-            print(f"Waiting {wait_seconds:.0f} seconds until {execution_time:%H:%M}")
-            time.sleep(wait_seconds)
-        elif now >= execution_time + timedelta(minutes=1):
-            strategy_exit()
-    if datetime.now(IST).time() >= EXIT_TIME:
-            strategy_exit()
+    # if (INTERVAL.upper().endswith(STRATEGY_CONFIG["daily_intervals"])and now.strftime("%H:%M") != STRATEGY_CONFIG["execution_time"]):
+    #     execution_time = datetime.combine(now.date(),datetime.strptime(STRATEGY_CONFIG["execution_time"], "%H:%M").time(),tzinfo=IST)
+    #     print("execution_time",execution_time)
+    #     if now < execution_time:
+    #         wait_seconds = max(0, (execution_time - now).total_seconds() - 5)
+    #         print(f"Waiting {wait_seconds:.0f} seconds until {execution_time:%H:%M}")
+    #         time.sleep(wait_seconds)
+    #     elif now >= execution_time + timedelta(minutes=1):
+    #         strategy_exit()
+    # if datetime.now(IST).time() >= EXIT_TIME:
+    #         strategy_exit()
     for stock in NIFTY_50:
         print(f"Starting {stock} {strategy} strategy ...")
         execute_strategy(stock, INTERVAL, SOURCE)
@@ -159,10 +180,7 @@ if __name__ == "__main__":
         placed_order = place_order(client, strategy, EXCHANGE, PRODUCT, MAX_CAPITAL_TRADE, signals)
         print(f"placed_order {placed_order}")
         if place_order:
-            already_executed_orders.update(placed_order)
+            already_executed_orders.append(placed_order)
             write_to_s3(BUCKET, s3_order_key, json.dumps(already_executed_orders, indent=2).encode("utf-8"), "application/json")
         s3_strategy_key = f"{STRATEGY_FOLDER}/{strategy}/{date_str}/executed_{ts_str}.json"
         write_to_s3(BUCKET, s3_strategy_key, json.dumps(signals, indent=2).encode("utf-8"), "application/json")
-    
-
-
