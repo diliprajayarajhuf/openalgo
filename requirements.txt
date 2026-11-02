@@ -165,3 +165,4 @@ openscript==0.8.1
 litellm==1.106.6
 agno==3.0.5
 ddgs>=9.16.0
+pandas_market_calendars==5.3.2
