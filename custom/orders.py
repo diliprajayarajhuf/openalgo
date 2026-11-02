@@ -23,5 +23,5 @@ def place_order(client, strategy, exchange, product, MAX_CAPITAL_TRADE, signals)
             )
             if response.get("status") == "success":
                 placed_order.append(signal['symbol'])
-            print("Buy Order Response:", response)
+            print(f"Buy Order Response for {signal['symbol']} : {response}")
     return placed_order
