@@ -9,11 +9,6 @@ import numpy as np
 import time, json
 from pathlib import Path
 import os, sys
-# from .index_constituent import NIFTY_50
-# from .indicators import dema, tema, two_ut_bot, supertrend, three_horse_crow
-# from .utils import build_signals, get_date_range, write_to_s3, read_s3_object, strategy_exit, STRATEGY_CONFIG
-# from .nse_utils import is_last_trading_day_of_week, is_last_trading_day_of_month
-# from .orders import place_order
 import sys
 from pathlib import Path
 
