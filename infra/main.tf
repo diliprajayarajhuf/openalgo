@@ -276,23 +276,12 @@ resource "aws_iam_role_policy" "openalgo" {
         Effect = "Allow"
 
         Action = [
-          "s3:GetObject"
-        ]
-
-        Resource = [
-          "arn:aws:s3:::us-east-1-openalgo/openalgo/openalgo.env"
-        ]
-      },
-      {
-        Effect = "Allow"
-
-        Action = [
           "s3:GetObject",
           "s3:PutObject"
         ]
 
         Resource = [
-          "arn:aws:s3:::us-east-1-openalgo/orders/*"
+          "arn:aws:s3:::us-east-1-openalgo/*"
         ]
       },
       {
