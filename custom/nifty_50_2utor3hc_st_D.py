@@ -9,6 +9,11 @@ import numpy as np
 import time, json
 from pathlib import Path
 import os, sys
+# from .index_constituent import NIFTY_50
+# from .indicators import dema, tema, two_ut_bot, supertrend, three_horse_crow
+# from .utils import build_signals, get_date_range, write_to_s3, read_s3_object, strategy_exit, STRATEGY_CONFIG
+# from .nse_utils import is_last_trading_day_of_week, is_last_trading_day_of_month
+# from .orders import place_order
 import sys
 from pathlib import Path
 
@@ -155,17 +160,17 @@ if __name__ == "__main__":
     now = datetime.now(IST)
     # now = datetime.fromisoformat("2026-11-01 15:15:00.880580+05:30")
     print(f"{strategy} running at {now}")
-    # if (INTERVAL.upper().endswith(STRATEGY_CONFIG["daily_intervals"])and now.strftime("%H:%M") != STRATEGY_CONFIG["execution_time"]):
-    #     execution_time = datetime.combine(now.date(),datetime.strptime(STRATEGY_CONFIG["execution_time"], "%H:%M").time(),tzinfo=IST)
-    #     print("execution_time",execution_time)
-    #     if now < execution_time:
-    #         wait_seconds = max(0, (execution_time - now).total_seconds() - 5)
-    #         print(f"Waiting {wait_seconds:.0f} seconds until {execution_time:%H:%M}")
-    #         time.sleep(wait_seconds)
-    #     elif now >= execution_time + timedelta(minutes=1):
-    #         strategy_exit()
-    # if datetime.now(IST).time() >= EXIT_TIME:
-    #         strategy_exit()
+    if (INTERVAL.upper().endswith(STRATEGY_CONFIG["daily_intervals"])and now.strftime("%H:%M") != STRATEGY_CONFIG["execution_time"]):
+        execution_time = datetime.combine(now.date(),datetime.strptime(STRATEGY_CONFIG["execution_time"], "%H:%M").time(),tzinfo=IST)
+        print("execution_time",execution_time)
+        if now < execution_time:
+            wait_seconds = max(0, (execution_time - now).total_seconds() - 5)
+            print(f"Waiting {wait_seconds:.0f} seconds until {execution_time:%H:%M}")
+            time.sleep(wait_seconds)
+        elif now >= execution_time + timedelta(minutes=1):
+            strategy_exit()
+    if datetime.now(IST).time() >= EXIT_TIME:
+            strategy_exit()
     for stock in NIFTY_50:
         print(f"Starting {stock} {strategy} strategy ...")
         execute_strategy(stock, INTERVAL, SOURCE)
