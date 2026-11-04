@@ -287,6 +287,18 @@ resource "aws_iam_role_policy" "openalgo" {
         Effect = "Allow"
 
         Action = [
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+
+        Resource = [
+          "arn:aws:s3:::us-east-1-openalgo/orders/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+
+        Action = [
           "ecr:GetAuthorizationToken"
         ]
 
