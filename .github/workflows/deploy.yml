@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-south-1
   AWS_ACCOUNT_ID: "590671674143"
   ECR_REPOSITORY: openalgo
   TF_VAR_key_pair_name: openalgo
